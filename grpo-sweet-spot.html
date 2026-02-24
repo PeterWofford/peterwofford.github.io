@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GRPO Has a Ten-Step Window — Peter Wofford</title>
+  <meta name="description" content="The 5-step smoke tests showed GRPO teaching genuine resilience. The 50-step full runs showed it destroying everything it built. The sweet spot is narrower than I thought.">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    :root { --pico-font-size: 16px; }
+    body > header, body > article, body > footer { max-width: 680px; margin: 0 auto; padding: 0 20px; }
+    header { margin-top: 2em; margin-bottom: 3em; }
+    .subtitle { font-style: italic; opacity: 0.7; margin-top: -0.5em; }
+    .post-meta { opacity: 0.6; font-size: 0.9em; margin-bottom: 2em; }
+    .theme-toggle { background: none; border: none; font-size: 1.2em; cursor: pointer; padding: 0; line-height: 1; }
+    header { display: flex; justify-content: space-between; align-items: flex-start; }
+  </style>
+</head>
+<body>
+<main class="container">
+  <header>
+    <div>
+      <h1><a href="/">Peter Wofford</a></h1>
+      <p>Staff Engineer · AI Infrastructure</p>
+    </div>
+    <button class="theme-toggle" aria-label="Toggle dark mode" onclick="toggleTheme()">🌙</button>
+  </header>
+
+  <article>
+    <h1>GRPO Has a Ten-Step Window</h1>
+    <p class="subtitle">The Resilience I Found Was Real. It Was Also Temporary.</p>
+    <p class="post-meta">February 24, 2026</p>
+
+    <p>In my <a href="/reward-function.html">last post</a>, I concluded that GRPO can't teach strategy but <em>can</em> teach resilience. I had the data: +25 percentage points on attribute removal, +10 on forced bad starts, all in five training steps. The agent learned to pivot around disabled attributes, always submit a guess, check its candidate list at decision points.</p>
+
+    <p>Then I ran the full 50-step experiments. Both collapsed.</p>
+
+    <h2>What the Smoke Tests Showed</h2>
+
+    <p>Quick recap. SFT-trained 20 Questions agent, 95% accuracy on clean games, matching GPT-5.2. I wanted to know if GRPO could teach it to handle adversity. Three perturbation types, three results:</p>
+
+    <table>
+      <tr><th>Perturbation</th><th>Baseline</th><th>After 5 GRPO steps</th></tr>
+      <tr><td>Answer corruption (invisible)</td><td>10%</td><td>5% (worse)</td></tr>
+      <tr><td>Forced bad start (observable)</td><td>90%</td><td>100%</td></tr>
+      <tr><td>Attribute removal (observable)</td><td>60%</td><td>85%</td></tr>
+    </table>
+
+    <p>The observable perturbations showed clear improvement. When <code>is_food</code> returns "unknown," try <code>is_edible</code>. When your memorized sequence breaks, check <code>get_top_candidates</code> and adapt. Not formatting tricks — I'd already fixed the environment to rule that out.</p>
+
+    <p>Five steps looked like a clean win.</p>
+
+    <h2>What Fifty Steps Showed</h2>
+
+    <table>
+      <tr><th>Perturbation</th><th>Baseline</th><th>Step 10 (peak)</th><th>Step 50 (final)</th></tr>
+      <tr><td>Forced bad start</td><td>55%</td><td><strong>98%</strong></td><td><strong>26%</strong></td></tr>
+      <tr><td>Attribute removal</td><td>60%</td><td><strong>~80%</strong></td><td><strong>0%</strong></td></tr>
+    </table>
+
+    <p>Both peaked around step 10. Then GRPO kept optimizing.</p>
+
+    <p>The forced bad start run degraded to suicide guessing — guessing immediately, even with 14 candidates remaining, avoids the accumulated cost of asking questions. Questions dropped from 12 to 6 by step 25. Reward went negative and stayed there.</p>
+
+    <p>The attribute removal run was worse. Two collapse phases: suicide guessing (steps 30-40, questions crashed from 12 to under 1), then complete policy death (steps 40-50, zero questions, zero guesses, 76 candidates remaining). The agent stopped doing anything. Same safe-haven collapse from my very first experiment — doing nothing beats getting penalized.</p>
+
+    <p>Step-by-step for attribute removal:</p>
+
+    <table>
+      <tr><th>Step</th><th>Correct rate</th><th>Avg questions</th><th>What's happening</th></tr>
+      <tr><td>1</td><td>80%</td><td>12.4</td><td>Normal play</td></tr>
+      <tr><td>10</td><td>75%</td><td>10.8</td><td>Peak zone</td></tr>
+      <tr><td>25</td><td>78%</td><td>12.5</td><td>Still functional</td></tr>
+      <tr><td>30</td><td>80%</td><td>12.7</td><td>Reward turns negative</td></tr>
+      <tr><td>35</td><td>100%</td><td><strong>5.2</strong></td><td>Collapse begins</td></tr>
+      <tr><td>40</td><td>100%</td><td><strong>0.75</strong></td><td>Near-total collapse</td></tr>
+      <tr><td>45</td><td><strong>0%</strong></td><td><strong>0.0</strong></td><td>Policy death</td></tr>
+      <tr><td>50</td><td>0%</td><td>0.0</td><td>Agent does nothing</td></tr>
+    </table>
+
+    <p>The 100% correct rate at steps 35-40 is a mirage. The agent guesses on every trajectory — some happen to be right — but it's stopped asking questions. By step 45, it's stopped doing anything at all.</p>
+
+    <h2>The Same Attractors, Every Time</h2>
+
+    <p>I've now seen policy collapse in four different settings:</p>
+
+    <ol>
+      <li><strong>Run 1:</strong> GRPO from scratch. Collapsed to inaction by step 20.</li>
+      <li><strong>Run 4b (50 steps):</strong> GRPO from SFT checkpoint, forced bad starts. Collapsed to suicide guessing by step 25.</li>
+      <li><strong>Run 4c (50 steps):</strong> GRPO from SFT checkpoint, attribute removal. Collapsed to inaction by step 45.</li>
+      <li><strong>Run 4a (5 steps):</strong> Answer corruption. Didn't collapse but degraded — early signs of the same drift.</li>
+    </ol>
+
+    <p>Every collapse converges to one of two modes: guess immediately with too many candidates, or do nothing. These aren't bugs. They're attractors in the reward landscape. Any RL setting with costly action sequences, sparse terminal reward, and a zero-cost default will have them.</p>
+
+    <p>The SFT starting point delays collapse — Run 1 hit it at step 20, the SFT-initialized runs lasted until steps 25-45 — but doesn't prevent it. Starting closer to optimal buys time. It doesn't change the landscape.</p>
+
+    <h2>The Sweet Spot Is Narrow</h2>
+
+    <p>GRPO's optimization has three phases on top of an SFT checkpoint:</p>
+
+    <p><strong>Phase 1 (steps 1-10): Genuine refinement.</strong> GRPO reinforces behaviors the SFT model almost-but-not-quite learned. Pivoting around disabled attributes. Checking candidates before guessing. Always submitting a guess. The SFT model had the right strategy but brittle execution. GRPO smooths the edges.</p>
+
+    <p><strong>Phase 2 (steps 10-30): Plateau and drift.</strong> The easy improvements are captured. Accuracy stays high but volatile — 75-80%, questions holding around 12. Functional, but GRPO is finding shortcuts. Reward turns negative around step 30. Bending toward collapse but not broken yet.</p>
+
+    <p><strong>Phase 3 (steps 30+): Collapse.</strong> The shortcuts take over. Questions drop to near-zero. Once the policy commits to guessing early or doing nothing, reward variance drops and there's no gradient signal to recover.</p>
+
+    <p>The smoke tests only saw Phase 1. The full runs saw all three.</p>
+
+    <h2>What This Means for My Previous Post</h2>
+
+    <p>The <a href="/reward-function.html">first post's</a> conclusion — "give the model the strategy through SFT, then use RL to make it survive the real world" — was directionally right but overstated. More accurately:</p>
+
+    <blockquote><p>Give the model the strategy through SFT. Then use RL <em>very carefully and briefly</em> to make it slightly more robust. Then stop before it forgets everything.</p></blockquote>
+
+    <p>That's less catchy. It's also more honest.</p>
+
+    <p>The resilience improvements were real. Attribute-pivoting, always-guess, strategic candidate checking — GRPO genuinely taught those in 5-10 steps. But GRPO doesn't know when to stop. Left running, it optimizes past the sweet spot into the same degenerate attractors it always finds. The improvements and the collapse are both real. They just happen at different timescales.</p>
+
+    <h2>The Practical Takeaway</h2>
+
+    <p>If you're using GRPO (or similar on-policy RL) to refine an SFT-trained agent:</p>
+
+    <ol>
+      <li><strong>Run smoke tests first.</strong> 5-10 steps will tell you if there's signal. No improvement in 10 steps means no improvement in 50.</li>
+      <li><strong>Eval early and often.</strong> The peak is around step 10. You won't know until you measure.</li>
+      <li><strong>Early stop aggressively.</strong> Stopping too early leaves improvement on the table. Stopping too late destroys everything the SFT taught. Guess which costs more.</li>
+      <li><strong>Don't trust training metrics past the peak.</strong> The 100% correct rate at step 35 in my attribute removal run was the agent guessing randomly on every trajectory. High accuracy during training can mean collapse, not improvement.</li>
+    </ol>
+
+    <p>The deeper question is whether standard RL stabilization techniques could extend the window. A <strong>KL divergence penalty</strong> from the SFT reference policy would directly penalize wandering too far from the learned strategy — the standard RLHF fix for this kind of drift, making the degenerate attractors more costly to reach. An <strong>entropy bonus</strong> would penalize the variance collapse I keep seeing — when all trajectories converge to the same degenerate behavior, an entropy term pushes back. I didn't test either. They're where I'd start next.</p>
+
+    <h2>The Revised Thesis</h2>
+
+    <p>After ten runs and $65 in compute:</p>
+
+    <blockquote><p><strong>GRPO is a refinement layer, not a training method.</strong> It can polish SFT-learned behavior within a narrow window — error pivoting, always-guess heuristics, candidate checking. It cannot teach strategy, cannot teach reasoning, and extended application destroys the very behaviors it initially improves.</p></blockquote>
+
+    <p>The recipe: pretraining for reasoning capacity. SFT for strategy. A carefully early-stopped GRPO pass for robustness. And the discipline to stop.</p>
+
+    <hr>
+
+    <p><em>This is a follow-up to <a href="/reward-function.html">The Reward Function Is Never the Problem You Think It Is</a>. Built with <a href="https://github.com/openpipe/art">ART</a> (OpenPipe), Qwen-14B, and ~$65 total compute across all experiments. Code on <a href="https://github.com/PeterWofford/20q-rl-project">GitHub</a>.</em></p>
+  </article>
+
+  <footer>
+    <p>Peter Wofford · <a href="https://github.com/PeterWofford">GitHub</a> · <a href="https://www.linkedin.com/in/peter-wofford233/">LinkedIn</a></p>
+  </footer>
+</main>
+<script>
+  function toggleTheme() {
+    const html = document.documentElement;
+    const btn = document.querySelector('.theme-toggle');
+    const isDark = html.getAttribute('data-theme') === 'dark';
+    html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+    btn.textContent = isDark ? '🌙' : '☀️';
+    localStorage.setItem('theme', isDark ? 'light' : 'dark');
+  }
+  // Restore saved preference, fall back to system preference
+  (function() {
+    const saved = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const theme = saved || (prefersDark ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', theme);
+    document.querySelector('.theme-toggle').textContent = theme === 'dark' ? '☀️' : '🌙';
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Reward Function Is Never the Problem You Think It Is — Peter Wofford</title>
+  <meta name="description" content="I trained an RL agent to play 20 Questions, watched it collapse from 65% to 0% accuracy in ten steps, and spent a day figuring out what reward signals can and can't teach a language model.">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+  <style>
+    :root { --pico-font-size: 16px; }
+    body > header, body > article, body > footer { max-width: 680px; margin: 0 auto; padding: 0 20px; }
+    header { margin-top: 2em; margin-bottom: 3em; }
+    .subtitle { font-style: italic; opacity: 0.7; margin-top: -0.5em; }
+    .post-meta { opacity: 0.6; font-size: 0.9em; margin-bottom: 2em; }
+    .footnotes { font-size: 0.85em; opacity: 0.7; border-top: 1px solid var(--pico-muted-border-color); margin-top: 3em; padding-top: 1em; }
+    .theme-toggle { background: none; border: none; font-size: 1.2em; cursor: pointer; padding: 0; line-height: 1; }
+    header { display: flex; justify-content: space-between; align-items: flex-start; }
+  </style>
+</head>
+<body>
+<main class="container">
+  <header>
+    <div>
+      <h1><a href="/">Peter Wofford</a></h1>
+      <p>Staff Engineer · AI Infrastructure</p>
+    </div>
+    <button class="theme-toggle" aria-label="Toggle dark mode" onclick="toggleTheme()">🌙</button>
+  </header>
+
+  <article>
+    <h1>The Reward Function Is Never the Problem You Think It Is</h1>
+    <p class="subtitle">RL Refines Execution, It Doesn't Teach Reasoning: A 20 Questions Case Study</p>
+    <p class="post-meta">February 24, 2026</p>
+
+    <p>Ten steps into training, my 20 Questions agent hit 65% accuracy — matching GPT-4o. By step 20, it scored 0%. Not because it guessed wrong. Because it stopped trying.</p>
+
+    <p>The agent found a loophole: doing nothing yields a timeout reward of 0.0, which beats the negative reward from a wrong guess. GRPO reinforced inaction. Every trajectory converged to the same degenerate loop — check the attribute list, check the candidate count, repeat until time runs out. Reward standard deviation dropped to zero. No variance, no gradient signal, no escape.</p>
+
+    <p>I spent the next twelve hours figuring out that this wasn't a reward function problem. It was a question about what RL can and can't teach a language model.</p>
+
+    <h2>Why 20 Questions</h2>
+
+    <p>20 Questions with predefined boolean attributes is a solved problem. A greedy information-gain algorithm — about 30 lines of Python — achieves 100% accuracy in ~6.5 questions across 76 objects. An oracle exists. Optimal play is fully defined.</p>
+
+    <p>I wasn't trying to build the best 20Q agent. I was using 20Q as a testbed because when you know what optimal looks like, you can measure exactly where RL deviates. In real agent tasks you don't know what optimal looks like. Here I did.</p>
+
+    <p>The thesis: <strong>GRPO acquires behavioral patterns but cannot acquire novel algorithmic reasoning from reward signal alone.</strong> RL refines execution. It doesn't teach reasoning.</p>
+
+    <h2>The Collapse and What It Taught Me</h2>
+
+    <table>
+      <tr><th>Metric</th><th>Step 0</th><th>Step 10 (peak)</th><th>Step 20 (collapsed)</th></tr>
+      <tr><td>Accuracy</td><td>30%</td><td>65%</td><td>0%</td></tr>
+      <tr><td>Avg questions asked</td><td>12.7</td><td>10.5</td><td>0.2</td></tr>
+      <tr><td>Reward std dev</td><td>~12</td><td>~8</td><td>~0</td></tr>
+    </table>
+
+    <p>Step 0 is the base Qwen-14B with no training — 30% accuracy out of the box from pretraining alone. GRPO sharpened that: by step 10, the model asked fewer but better questions, narrowed candidates efficiently, and matched GPT-4o without ever being shown a single example of good play.</p>
+
+    <p>Then it collapsed. Timeout reward (0.0) beats wrong-guess penalty (-15), so once a few trajectories discovered the do-nothing loop, GRPO amplified it. The reward_std_dev chart tells the whole story: it drops from ~12 to ~0 as every trajectory converges to identical behavior. At std_dev ≈ 0, GRPO's advantage computation produces no gradient. Game over.</p>
+
+    <p>This isn't a hyperparameter issue. It's structural: trajectory-level reward plus on-policy RL means degenerate low-variance policies are stable equilibria.</p>
+
+    <h2>The Metrics Lie (Read Your Trajectories)</h2>
+
+    <p>Two stories. Same moral.</p>
+
+    <p><strong>Story one: the silent failure.</strong> Early on, I tried expert iteration — injecting perfect oracle trajectories into the training pipeline. W&amp;B showed 100% accuracy. Loss curves looked healthy. Everything green. But ART is on-policy: it needs logprobs from the model's own generation to compute gradients. The oracle trajectories had no logprobs. The optimizer accepted the data, logged the metrics, and silently skipped every gradient update.<sup><a href="#fn1" id="ref1">1</a></sup> The model didn't change. I spent hours celebrating a result that didn't exist.</p>
+
+    <p><strong>Story two: the formatting confound.</strong> Later, testing GRPO's resilience to perturbations, I saw 15% → 80% accuracy. Dramatic. Except trajectory inspection revealed that 90% of baseline "failures" were correct identifications submitted by name ("Dog") instead of opaque ID ("d4t6u"). The environment did strict string matching. The model's <em>reasoning</em> was 90% accurate at baseline — the 15% number reflected a formatting convention, not a reasoning failure. True GRPO improvement: +10 percentage points, not +65.</p>
+
+    <p>Same moral: <strong>aggregate metrics will lie to you in exactly the way you want to be lied to.</strong> Reading 20 individual trajectories is tedious. It's also where you find that your gradients are zero, or that your environment is measuring the wrong thing.</p>
+
+    <h2>SFT Does in One Pass What GRPO Couldn't</h2>
+
+    <p>If GRPO can't discover the strategy, can supervised fine-tuning just hand it over?</p>
+
+    <p>First attempt: 0% accuracy. The model learned the oracle's question-asking strategy perfectly (7.0 avg questions, 1.1 candidates remaining) but hallucinated fake object IDs at guess time. The oracle has direct state access and never calls <code>get_top_candidates</code> to look up IDs. The LLM can only see IDs through that tool call. Since the training data never included it, the model invented plausible-looking IDs instead.</p>
+
+    <p>The fix: inject a <code>get_top_candidates</code> call before every <code>submit_guess</code> in the 76 oracle trajectories. Second attempt: <strong>95% accuracy.</strong> That's in the same range as GPT-5.2, which I benchmarked at 96.7% on the same environment.<sup><a href="#fn2" id="ref2">2</a></sup> Seventy-six training examples on a 14B model matched a frontier model orders of magnitude larger.</p>
+
+    <p>SFT trivially teaches what GRPO couldn't learn. The base model already understands binary search and information theory from pretraining. It just needs to be shown the pattern once.</p>
+
+    <h2>What GRPO <em>Can</em> Learn: Resilience</h2>
+
+    <p>SFT-trained agents are brittle — they've only seen the happy path. When something goes wrong mid-game, they have no experience recovering. I designed three perturbation experiments to test whether GRPO could teach resilience, even if it couldn't teach strategy.</p>
+
+    <p><strong>Answer corruption (invisible perturbation):</strong> Flip 15% of yes/no answers silently. The environment state updates consistently based on the lie — nothing looks wrong from the agent's perspective. Result: SFT accuracy dropped from 95% to 10%. GRPO made it <em>worse</em> — down to 5%. Recovery would require reasoning: "I asked <code>is_animal</code> and got <code>yes</code>, but Desk is still in the candidate list — that's inconsistent." That's cross-referencing world knowledge against tool outputs. GRPO can't teach it.</p>
+
+    <p><strong>Forced bad start (observable perturbation):</strong> Pre-ask 2-3 random non-optimal questions before the agent takes control. The agent inherits a candidate set it didn't create. Result: <strong>+10 percentage points</strong> (90% → 100%). The SFT agent was already surprisingly robust to bad starts — its binary search strategy transferred even from non-optimal states. But GRPO polished the remaining failures. The agent learned to call <code>get_top_candidates</code> mid-game and pick attributes that discriminate among the <em>actual</em> remaining candidates, rather than rigidly following its memorized sequence.</p>
+
+    <p><strong>Attribute removal (observable perturbation):</strong> Disable 15% of attributes per episode — they return "unknown" when queried. Result: <strong>+25 percentage points</strong> (60% → 85%) in just 5 training steps. This was the strongest signal. The SFT model would compulsively retry disabled attributes — one episode asked <code>is_animal</code> seven times in a row, getting "unknown" each time, never pivoting. Post-GRPO, the agent learned three distinct behavioral adaptations: skip disabled attributes and try functional equivalents (<code>is_animal</code> blocked → try <code>is_living</code>), use <code>get_top_candidates</code> when narrowing stalls, and always submit a guess rather than timing out. The remaining failures were all cases where critical branching attributes were disabled — requiring full decision-tree replanning that GRPO couldn't provide.</p>
+
+    <p>The pattern across all three is clean: <strong>GRPO teaches resilience when perturbations are observable and recovery requires local behavioral adaptation. It fails when recovery requires reasoning about invisible state or global replanning.</strong></p>
+
+    <h2>The Refined Thesis</h2>
+
+    <p>After a day of experiments, the thesis sharpened:</p>
+
+    <blockquote><p>Use SFT or pretraining to teach the strategy. Use GRPO to make it resilient.</p></blockquote>
+
+    <p>GRPO isn't a strategy teacher. It's a robustness layer. Behavioral patterns — tool-use rituals, skip-and-pivot, always-submit-a-guess — are learnable from reward signal. Algorithmic reasoning — entropy maximization, inconsistency detection, replanning around structural failures — is not.</p>
+
+    <p>If you're building RL-trained agents, don't expect the reward function to discover your agent's strategy. You will tune it six ways. You will add bonuses and penalties and shaping terms. You will convince yourself the next version will fix the collapse. It won't. The reward function was never the problem. The problem was asking RL to teach something it can't learn.</p>
+
+    <p>Give the model the strategy through SFT. Then use RL to make it survive the real world.</p>
+
+    <hr>
+
+    <p><em>Built with <a href="https://github.com/openpipe/art">ART</a> (OpenPipe), Qwen-14B, and approximately $50 in compute across all experiments. The entire stack is open-source: ART for GRPO training, a serverless backend for compute (no reserved GPUs), and W&amp;B for logging. Code is on <a href="https://github.com/PeterWofford/20q-rl-project">GitHub</a>.</em></p>
+
+    <p><em>Follow-up: <a href="/grpo-sweet-spot.html">GRPO Has a Ten-Step Window</a></em></p>
+
+    <div class="footnotes">
+      <p id="fn1"><sup>1</sup> This appears to be expected behavior for ART's on-policy architecture, though I didn't find it documented. If you inject trajectories without model logprobs, the optimizer has nothing to differentiate against. <a href="#ref1">↩</a></p>
+      <p id="fn2"><sup>2</sup> These are my own evaluations on the same 76-object environment, not published benchmarks from OpenAI. <a href="#ref2">↩</a></p>
+    </div>
+  </article>
+
+  <footer>
+    <p>Peter Wofford · <a href="https://github.com/PeterWofford">GitHub</a> · <a href="https://www.linkedin.com/in/peter-wofford233/">LinkedIn</a></p>
+  </footer>
+</main>
+<script>
+  function toggleTheme() {
+    const html = document.documentElement;
+    const btn = document.querySelector('.theme-toggle');
+    const isDark = html.getAttribute('data-theme') === 'dark';
+    html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+    btn.textContent = isDark ? '🌙' : '☀️';
+    localStorage.setItem('theme', isDark ? 'light' : 'dark');
+  }
+  // Restore saved preference, fall back to system preference
+  (function() {
+    const saved = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const theme = saved || (prefersDark ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', theme);
+    document.querySelector('.theme-toggle').textContent = theme === 'dark' ? '☀️' : '🌙';
+  })();
+</script>
+</body>
+</html>
