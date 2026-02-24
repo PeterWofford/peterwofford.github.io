@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -13,13 +13,18 @@
     .subtitle { font-style: italic; opacity: 0.7; margin-top: -0.5em; }
     .post-meta { opacity: 0.6; font-size: 0.9em; margin-bottom: 2em; }
     .footnotes { font-size: 0.85em; opacity: 0.7; border-top: 1px solid var(--pico-muted-border-color); margin-top: 3em; padding-top: 1em; }
+    .theme-toggle { background: none; border: none; font-size: 1.2em; cursor: pointer; padding: 0; line-height: 1; }
+    header { display: flex; justify-content: space-between; align-items: flex-start; }
   </style>
 </head>
 <body>
 <main class="container">
   <header>
-    <h1><a href="/">Peter Wofford</a></h1>
-    <p>Staff Engineer · AI Infrastructure</p>
+    <div>
+      <h1><a href="/">Peter Wofford</a></h1>
+      <p>Staff Engineer · AI Infrastructure</p>
+    </div>
+    <button class="theme-toggle" aria-label="Toggle dark mode" onclick="toggleTheme()">🌙</button>
   </header>
 
   <article>
@@ -111,8 +116,26 @@
   </article>
 
   <footer>
-    <p>Peter Wofford · <a href="https://github.com/PeterWofford">GitHub</a> · <a href="https://linkedin.com/in/peterwofford">LinkedIn</a></p>
+    <p>Peter Wofford · <a href="https://github.com/PeterWofford">GitHub</a> · <a href="https://www.linkedin.com/in/peter-wofford233/">LinkedIn</a></p>
   </footer>
 </main>
+<script>
+  function toggleTheme() {
+    const html = document.documentElement;
+    const btn = document.querySelector('.theme-toggle');
+    const isDark = html.getAttribute('data-theme') === 'dark';
+    html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+    btn.textContent = isDark ? '🌙' : '☀️';
+    localStorage.setItem('theme', isDark ? 'light' : 'dark');
+  }
+  // Restore saved preference, fall back to system preference
+  (function() {
+    const saved = localStorage.getItem('theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const theme = saved || (prefersDark ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', theme);
+    document.querySelector('.theme-toggle').textContent = theme === 'dark' ? '☀️' : '🌙';
+  })();
+</script>
 </body>
 </html>
