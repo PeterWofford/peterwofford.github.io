@@ -70,6 +70,8 @@
     document.documentElement.setAttribute('data-theme', theme);
     document.querySelector('.theme-toggle').textContent = theme === 'dark' ? '☀️' : '🌙';
   })();
+  // External links open in new tab, internal links stay in tab
+  document.querySelectorAll('a[href^="http"]').forEach(a => a.target = '_blank');
 </script>
 </body>
 </html>
